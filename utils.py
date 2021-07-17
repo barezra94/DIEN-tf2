@@ -40,9 +40,9 @@ def auc_arr(score_p, score_n):
 def eval(model, test_data):
     auc_sum = 0.0
     score_arr = []
-    for u, i, j, hist_i, sl in test_data:
-        p_out, p_logit = model(u,i,hist_i,sl)
-        n_out, n_logit = model(u,j,hist_i,sl)
+    for u, i, j, hist_i, sl,urt in test_data:
+        p_out, p_logit = model(u,i,hist_i,sl,urt)
+        n_out, n_logit = model(u,j,hist_i,sl,urt)
         mf_auc = tf.reduce_sum(tf.cast(p_out>n_out, dtype=tf.float32))
 
         score_arr += auc_arr(p_logit, n_logit)

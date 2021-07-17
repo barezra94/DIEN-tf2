@@ -9,8 +9,8 @@ import time
 import tensorflow as tf
 
 from config import argparser
-from data import get_dataloader
-from model import Base, DIN, DIEN
+from data import get_dataloader_wt
+from model import Base, DIN, DIEN,DIN_wt
 from utils import eval
 
 # Config
@@ -22,24 +22,24 @@ args = argparser()
 # Data Load
 train_data, test_data, \
 user_count, item_count, cate_count, \
-cate_list = get_dataloader(args.train_batch_size, args.test_batch_size)
-
+cate_list = get_dataloader_wt(args.train_batch_size, args.test_batch_size)
+urt_list=0
 # Loss, Optim
 optimizer = tf.keras.optimizers.SGD(learning_rate=args.lr, momentum=0.0)
 loss_metric = tf.keras.metrics.Sum()
 auc_metric = tf.keras.metrics.AUC()
 
 # Model
-model = Base(user_count, item_count, cate_count, cate_list,
+model = DIN_wt(user_count, item_count, cate_count, cate_list, urt_list,
              args.user_dim, args.item_dim, args.cate_dim, args.dim_layers)
 
 # Board
 train_summary_writer = tf.summary.create_file_writer(args.log_path)
 
 #@tf.function
-def train_one_step(u,i,y,hist_i,sl):
+def train_one_step(u,i,y,hist_i,sl,urt):
     with tf.GradientTape() as tape:
-        output,_ = model(u,i,hist_i,sl)
+        output,_ = model(u,i,hist_i,sl,urt)
         loss = tf.reduce_mean(
                 tf.nn.sigmoid_cross_entropy_with_logits(logits=output,
                                                         labels=tf.cast(y, dtype=tf.float32)))
@@ -55,8 +55,8 @@ def train(optimizer):
     best_auc = 0.
     start_time = time.time()
     for epoch in range(args.epochs):
-        for step, (u, i, y, hist_i, sl) in enumerate(train_data, start=1):
-            train_one_step(u, i, y, hist_i, sl)
+        for step, (u, i, y, hist_i, sl,urt) in enumerate(train_data, start=1):
+            train_one_step(u, i, y, hist_i, sl,urt)
 
             if step % args.print_step == 0:
                 test_gauc, auc = eval(model, test_data)
@@ -79,7 +79,10 @@ def train(optimizer):
         print('Epoch %d DONE\tCost time: %.2f' % (epoch, time.time()-start_time))
     print('Best test_gauc: ', best_auc)
 
-
+def print_hi():
+  print('-- finish train --')
 # Main
 if __name__ == '__main__':
+    print('start trainig')
     train(optimizer)
+    print_finish()

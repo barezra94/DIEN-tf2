@@ -121,3 +121,94 @@ class DIEN(Base):
         logit = tf.keras.activations.sigmoid(output)
 
         return output, logit
+
+
+
+class Base_wt(tf.keras.Model):
+    def __init__(self, user_count, item_count, cate_count, cate_list,
+                       urt, user_dim, item_dim, cate_dim,
+                       dim_layers):
+        super(Base_wt, self).__init__()
+        print('dimensions:')
+        print(user_count, user_dim)
+        self.item_dim = item_dim
+        self.cate_dim = cate_dim
+        self.ureview_time = urt
+        self.user_emb = nn.Embedding(user_count, user_dim)
+        self.item_emb = nn.Embedding(item_count, item_dim)
+        self.cate_emb = nn.Embedding(cate_count, cate_dim)
+        self.item_bias= tf.Variable(tf.zeros([item_count]), trainable=True)
+        self.cate_list = cate_list
+
+        self.hist_bn = nn.BatchNormalization()
+        self.hist_fc = nn.Dense(item_dim+cate_dim)
+
+        self.fc = tf.keras.Sequential()
+        self.fc.add(nn.BatchNormalization())
+        for dim_layer in dim_layers[:-1]:
+            self.fc.add(nn.Dense(dim_layer, activation='sigmoid'))
+        self.fc.add(nn.Dense(dim_layers[-1], activation=None))
+
+    def get_emb(self, user, item, history):
+        user_emb = self.user_emb(user)
+
+        item_emb = self.item_emb(item)
+        item_cate_emb = self.cate_emb(tf.gather(self.cate_list, item))
+        item_join_emb = tf.concat([item_emb, item_cate_emb], -1)
+        item_bias= tf.gather(self.item_bias, item)
+
+        hist_emb = self.item_emb(history)
+        hist_cate_emb = self.cate_emb(tf.gather(self.cate_list, history))
+        hist_join_emb = tf.concat([hist_emb, hist_cate_emb], -1)
+
+        return user_emb, item_join_emb, item_bias, hist_join_emb
+
+    def call(self, user, item, history, length):
+        user_emb, item_join_emb, item_bias, hist_join_emb = self.get_emb(user, item, history)
+
+        hist_mask = tf.sequence_mask(length, max(length), dtype=tf.float32)
+        hist_mask = tf.tile(tf.expand_dims(hist_mask, -1), (1,1,self.item_dim+self.cate_dim))
+        hist_join_emb = tf.math.multiply(hist_join_emb, hist_mask)
+        hist_join_emb = tf.reduce_sum(hist_join_emb, 1)
+        hist_join_emb = tf.math.divide(hist_join_emb, tf.cast(tf.tile(tf.expand_dims(length, -1),
+                                                      [1,self.item_dim+self.cate_dim]), tf.float32))
+
+        hist_hid_emb = self.hist_fc(self.hist_bn(hist_join_emb))
+        join_emb = tf.concat([user_emb, item_join_emb, hist_hid_emb], -1)
+
+        output = tf.squeeze(self.fc(join_emb)) + item_bias
+        logit = tf.keras.activations.sigmoid(output)
+
+        return output, logit
+
+
+class DIN_wt(Base_wt):
+    def __init__(self, user_count, item_count, cate_count, cate_list,
+                       urt, user_dim,item_dim, cate_dim,
+                       dim_layers):
+        super(DIN_wt, self).__init__(user_count, item_count, cate_count, cate_list,
+                                  urt, user_dim,  item_dim, cate_dim,
+                                  dim_layers)
+
+        self.hist_at = attention(item_dim+cate_dim, dim_layers)
+        self.time_facor = 2
+        self.fc = tf.keras.Sequential()
+        self.current_time = urt
+        self.fc.add(nn.BatchNormalization())
+        for dim_layer in dim_layers[:-1]:
+            self.fc.add(nn.Dense(dim_layer, activation=None))
+            self.fc.add(dice(dim_layer))
+        self.fc.add(nn.Dense(dim_layers[-1], activation=None))
+
+    def call(self, user, item, history, length,urt):
+        # history = history* np.exp(-self.time_facor*(urt -self.current_time ))
+        user_emb, item_join_emb, item_bias, hist_join_emb = self.get_emb(user, item, history)
+        hist_attn_emb = self.hist_at(item_join_emb, hist_join_emb, length)
+        hist_attn_emb = self.hist_fc(self.hist_bn(hist_attn_emb))
+        # new_history = tf.concat([user_emb, item_join_emb, hist_attn_emb*np.exp(-self.time_facor*(urt -self.current_time ))], -1)
+        join_emb = tf.concat([user_emb, item_join_emb, hist_attn_emb], -1)
+
+        output = tf.squeeze(self.fc(join_emb)) + item_bias
+        logit = tf.keras.activations.sigmoid(output)
+
+        return output, logit
